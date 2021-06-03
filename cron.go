@@ -143,9 +143,9 @@ func (c *Crontab) RunAll() {
 
 // RunScheduled jobs
 func (c *Crontab) runScheduled(t time.Time) {
-	tick := getTick(t)
+	tck := getTick(t)
 	for _, j := range c.jobs {
-		if j.tick(tick) {
+		if j.tick(tck) {
 			go j.run()
 		}
 	}
