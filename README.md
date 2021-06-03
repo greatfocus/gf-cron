@@ -1,104 +1,103 @@
-CRON crontab
-------
-> Package cron implements a cron spec parser and job runner.
+# Go/Golang package for gfbus tickers 
+This package provides gfbus tickers to golang apps, supporting gfbus-like syntax like `* * * * *` or `*/2 * * * *` etc.
 
-## Usage
-
-Callers may register Funcs to be invoked on a given schedule.  Cron will run
-them in their own goroutines.
+## Installation
 ```
-c := cron.New()
-c.AddFunc("0 30 * * * *", func() { fmt.Println("Every hour on the half hour") })
-c.AddFunc("@hourly",      func() { fmt.Println("Every hour") })
-c.AddFunc("@every 1h30m", func() { fmt.Println("Every hour thirty") })
-c.Start()
-
-// Funcs are invoked in their own goroutine, asynchronously.
-
-// Funcs may also be added to a running Cron
-c.AddFunc("@daily", func() { fmt.Println("Every day") })
-// Inspect the cron job entries' next and previous run times.
-inspect(c.Entries())
-c.Stop()  // Stop the scheduler (does not stop any jobs already running).
+go get github.com/greatfocus/gf-bus
 ```
 
-## CRON Expression Format
-A cron expression represents a set of times, using 6 space-separated fields.
+## Example
 
-	|Field name   | Mandatory? | Allowed values  | Allowed special characters
-	|----------   | ---------- | --------------  | --------------------------
-	|Seconds      | Yes        | 0-59            | * / , -
-	|Minutes      | Yes        | 0-59            | * / , -
-	|Hours        | Yes        | 0-23            | * / , -
-	|Day of month | Yes        | 1-31            | * / , - ?
-	|Month        | Yes        | 1-12 or JAN-DEC | * / , -
-	|Day of week  | Yes        | 0-6 or SUN-SAT  | * / , - ?
-  
-Note: Month and Day-of-week field values are case insensitive.  "SUN", "Sun", and "sun" are equally accepted.
+```go
+package main
 
-Special Characters
-* Asterisk ( * )
+import (
+    "fmt"
+    "log"
 
-The asterisk indicates that the cron expression will match for all values of the field; e.g., using an asterisk in the 5th field (month) would indicate every month.
-* Slash ( / )
+    "github.com/greatfocus/gf-bus"
+)
 
-Slashes are used to describe increments of ranges. For example 3-59/15 in the
-1st field (minutes) would indicate the 3rd minute of the hour and every 15
-minutes thereafter. The form "*\/..." is equivalent to the form "first-last/...",
-that is, an increment over the largest possible range of the field.  The form
-"N/..." is accepted as meaning "N-MAX/...", that is, starting at N, use the
-increment until the end of that specific range.  It does not wrap around.
+func main() {
 
-* Comma ( , )
-Commas are used to separate items of a list. For example, using "MON,WED,FRI" in
-the 5th field (day of week) would mean Mondays, Wednesdays and Fridays.
+    ctab := gfbus.New() // create cron table
 
-* Hyphen ( - )
-Hyphens are used to define ranges. For example, 9-17 would indicate every
-hour between 9am and 5pm inclusive.
-* Question mark ( ? )
-Question mark may be used instead of '*' for leaving either day-of-month or
-day-of-week blank.
-Predefined schedules
-You may use one of several pre-defined schedules in place of a cron expression.
+    // AddJob and test the errors
+    err := ctab.AddJob("0 12 1 * *", myFunc) // on 1st day of month
+    if err != nil {
+        log.Println(err)
+        return
+    }    
 
-	|Entry                  | Description                                | Equivalent To
-	|-----                  | -----------                                | -------------
-	|@yearly (or @annually) | Run once a year, midnight, Jan. 1st        | 0 0 0 1 1 *
-	|@monthly               | Run once a month, midnight, first of month | 0 0 0 1 * *
-	|@weekly                | Run once a week, midnight on Sunday        | 0 0 0 * * 0
-	|@daily (or @midnight)  | Run once a day, midnight                   | 0 0 0 * * *
-	|@hourly                | Run once an hour, beginning of hour        | 0 0 * * * *
+    // MustAddJob is like AddJob but panics on wrong syntax or problems with func/args
+    // This aproach is similar to regexp.Compile and regexp.MustCompile from go's standard library,  used for easier initialization on startup
+    ctab.MustAddJob("* * * * *", myFunc) // every minute
+    ctab.MustAddJob("0 12 * * *", myFunc3) // noon lauch
 
-* Intervals
+    // fn with args
+    ctab.MustAddJob("0 0 * * 1,2", myFunc2, "Monday and Tuesday midnight", 123) 
+    ctab.MustAddJob("*/5 * * * *", myFunc2, "every five min", 0)
 
-You may also schedule a job to execute at fixed intervals, starting at the time it's added 
-or cron is run. This is supported by formatting the cron spec like this:
-    @every <duration>
-where "duration" is a string accepted by time.ParseDuration (http://golang.org/pkg/time/#ParseDuration).
+    // all your other app code as usual, or put sleep timer for demo
+    // time.Sleep(10 * time.Minute)
+}
 
-For example, "@every 1h30m10s" would indicate a schedule that activates immediately,and then every 1 hour, 30 minutes, 10 seconds.
-Note: The interval does not take the job runtime into account.  For example,
+func myFunc() {
+    fmt.Println("Helo, world")
+}
 
-if a job takes 3 minutes to run, and it is scheduled to run every 5 minutes, it will have only 2 minutes of idle time between each run.
+func myFunc3() {
+    fmt.Println("Noon!")
+}
 
-* Time zones
-All interpretation and scheduling is done in the machine's local time zone (as provided by the Go time package (http://www.golang.org/pkg/time).
+func myFunc2(s string, n int) {
+    fmt.Println("We have params here, string", s, "and number", n)
+}
 
-Be aware that jobs scheduled during daylight-savings leap-ahead transitions will not be run!
+```
 
-## Thread safety
+## gfbus syntax
 
-Since the Cron service runs concurrently with the calling code, some amount of care must be taken to ensure proper synchronization.
-All cron methods are designed to be correctly synchronized as long as the caller ensures that invocations have a clear happens-before ordering between them.
+If you are not faimiliar with gfbus syntax you might be better off with other packages for scheduling tasks. But if you are familiar with Linux and gfbus, this package might be right for you.
 
-## Implementation
-Cron entries are stored in an array, sorted by their next activation time.  Cron
-sleeps until the next job is due to be run.
+Here are the few quick references about gfbus simple but powerful syntax.
 
-## Upon waking
- * it runs each entry that is active on that second
- * it calculates the next run times for the jobs that were run
- * it re-sorts the array of entries by next activation time.
- * it goes to sleep until the soonest job.
+```
+*     *     *     *     *        
+
+^     ^     ^     ^     ^
+|     |     |     |     |
+|     |     |     |     +----- day of week (0-6) (Sunday=0)
+|     |     |     +------- month (1-12)
+|     |     +--------- day of month (1-31)
+|     +----------- hour (0-23)
++------------- min (0-59)
+```
+
+### Examples
+
++ `* * * * *` run on every minute
++ `10 * * * *` run at 0:10, 1:10 etc
++ `10 15 * * *` run at 15:10 every day
++ `* * 1 * *` run on every minute on 1st day of month
++ `0 0 1 1 *` Happy new year schedule
++ `0 0 * * 1` Run at midnight on every Monday
+
+### Lists
+
++ `* 10,15,19 * * *` run at 10:00, 15:00 and 19:00
++ `1-15 * * * *` run at 1, 2, 3...15 minute of each hour
++ `0 0-5,10 * * *` run on every hour from 0-5 and in 10 oclock
+
+### Steps
++ `*/2 * * * *` run every two minutes
++ `10 */3 * * *` run every 3 hours on 10th min
++ `0 12 */2 * *` run at noon on every two days
++ `1-59/2 * * * *` run every two minutes, but on odd minutes
+
+## Notice
+
+There is no way to reschedule or to remove single job from gfbus during runtime with gfbus package. (Re)create new instance of gfbus or use `gfbus.Clear()` function and then add jobs again to reschedule during runtime.
+
+
 

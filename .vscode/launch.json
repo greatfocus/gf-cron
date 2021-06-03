@@ -11,10 +11,8 @@
             "mode": "test",
             "program": "${workspaceRoot}",
             "args": [
-                "spec_test.go",
-                "parser_test.go",
                 "cron_test.go",
-                "constantdelay_test.go"
+                "job_test.go"
             ],
             "showLog": true
         } 

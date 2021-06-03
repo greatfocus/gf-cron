@@ -1,259 +1,321 @@
 package gfcron
 
 import (
+	"errors"
+	"fmt"
 	"log"
-	"runtime"
-	"sort"
+	"reflect"
+	"regexp"
+	"strconv"
+	"strings"
 	"time"
 )
 
-// Cron keeps track of any number of entries, invoking the associated func as
-// specified by the schedule. It may be started, stopped, and the entries may
-// be inspected while running.
-type Cron struct {
-	entries  []*Entry
-	stop     chan struct{}
-	add      chan *Entry
-	snapshot chan []*Entry
-	running  bool
-	ErrorLog *log.Logger
-	location *time.Location
+// Crontab struct representing cron table
+type Crontab struct {
+	ticker *time.Ticker
+	jobs   []job
 }
 
-// Job is an interface for submitted cron jobs.
-type Job interface {
-	Run()
+// job in cron table
+type job struct {
+	min       map[int]struct{}
+	hour      map[int]struct{}
+	day       map[int]struct{}
+	month     map[int]struct{}
+	dayOfWeek map[int]struct{}
+
+	fn   interface{}
+	args []interface{}
 }
 
-// The Schedule describes a job's duty cycle.
-type Schedule interface {
-	// Return the next activation time, later than the given time.
-	// Next is invoked initially, and then each time the job is run.
-	Next(time.Time) time.Time
+// tick is individual tick that occures each minute
+type tick struct {
+	min       int
+	hour      int
+	day       int
+	month     int
+	dayOfWeek int
 }
 
-// Entry consists of a schedule and the func to execute on that schedule.
-type Entry struct {
-	// The schedule on which this job should be run.
-	Schedule Schedule
-
-	// The next time the job will run. This is the zero time if Cron has not been
-	// started or this entry's schedule is unsatisfiable
-	Next time.Time
-
-	// The last time this job was run. This is the zero time if the job has never
-	// been run.
-	Prev time.Time
-
-	// The Job to run.
-	Job Job
+// New initializes and returns new cron table
+func New() *Crontab {
+	return new(time.Minute)
 }
 
-// byTime is a wrapper for sorting the entry array by time
-// (with zero time at the end).
-type byTime []*Entry
-
-func (s byTime) Len() int      { return len(s) }
-func (s byTime) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
-func (s byTime) Less(i, j int) bool {
-	// Two zero times should return false.
-	// Otherwise, zero is "greater" than any other time.
-	// (To sort it at the end of the list.)
-	if s[i].Next.IsZero() {
-		return false
+// new creates new crontab, arg provided for testing purpose
+func new(t time.Duration) *Crontab {
+	c := &Crontab{
+		ticker: time.NewTicker(t),
 	}
-	if s[j].Next.IsZero() {
-		return true
-	}
-	return s[i].Next.Before(s[j].Next)
+
+	go func() {
+		for t := range c.ticker.C {
+			c.runScheduled(t)
+		}
+	}()
+
+	return c
 }
 
-// New returns a new Cron job runner, in the Local time zone.
-func New() *Cron {
-	return NewWithLocation(time.Now().Location())
-}
-
-// NewWithLocation returns a new Cron job runner.
-func NewWithLocation(location *time.Location) *Cron {
-	return &Cron{
-		entries:  nil,
-		add:      make(chan *Entry),
-		stop:     make(chan struct{}),
-		snapshot: make(chan []*Entry),
-		running:  false,
-		ErrorLog: nil,
-		location: location,
-	}
-}
-
-// A wrapper that turns a func() into a cron.Job
-type FuncJob func()
-
-func (f FuncJob) Run() { f() }
-
-// AddFunc adds a func to the Cron to be run on the given schedule.
-func (c *Cron) AddFunc(spec string, cmd func()) error {
-	return c.AddJob(spec, FuncJob(cmd))
-}
-
-// AddJob adds a Job to the Cron to be run on the given schedule.
-func (c *Cron) AddJob(spec string, cmd Job) error {
-	schedule, err := Parse(spec)
+// AddJob to cron table
+//
+// Returns error if:
+//
+// * Cron syntax can't be parsed or out of bounds
+//
+// * fn is not function
+//
+// * Provided args don't match the number and/or the type of fn args
+func (c *Crontab) AddJob(schedule string, fn interface{}, args ...interface{}) error {
+	j, err := parseSchedule(schedule)
 	if err != nil {
 		return err
 	}
-	c.Schedule(schedule, cmd)
+
+	if fn == nil || reflect.ValueOf(fn).Kind() != reflect.Func {
+		return fmt.Errorf("cron job must be func()")
+	}
+
+	fnType := reflect.TypeOf(fn)
+	if len(args) != fnType.NumIn() {
+		return fmt.Errorf("number of func() params and number of provided params doesn't match")
+	}
+
+	for i := 0; i < fnType.NumIn(); i++ {
+		a := args[i]
+		t1 := fnType.In(i)
+		t2 := reflect.TypeOf(a)
+
+		if t1 != t2 {
+			if t1.Kind() != reflect.Interface {
+				return fmt.Errorf("param with index %d shold be `%s` not `%s`", i, t1, t2)
+			}
+			if !t2.Implements(t1) {
+				return fmt.Errorf("param with index %d of type `%s` doesn't implement interface `%s`", i, t2, t1)
+			}
+		}
+	}
+
+	// all checked, add job to cron tab
+	j.fn = fn
+	j.args = args
+	c.jobs = append(c.jobs, j)
 	return nil
 }
 
-// Schedule adds a Job to the Cron to be run on the given schedule.
-func (c *Cron) Schedule(schedule Schedule, cmd Job) {
-	entry := &Entry{
-		Schedule: schedule,
-		Job:      cmd,
+// MustAddJob is like AddJob but panics if there is an problem with job
+//
+// It simplifies initialization, since we usually add jobs at the beggining so you won't have to check for errors (it will panic when program starts).
+// It is a similar aproach as go's std lib package `regexp` and `regexp.Compile()` `regexp.MustCompile()`
+// MustAddJob will panic if:
+//
+// * Cron syntax can't be parsed or out of bounds
+//
+// * fn is not function
+//
+// * Provided args don't match the number and/or the type of fn args
+func (c *Crontab) MustAddJob(schedule string, fn interface{}, args ...interface{}) {
+	if err := c.AddJob(schedule, fn, args...); err != nil {
+		panic(err)
 	}
-	if !c.running {
-		c.entries = append(c.entries, entry)
-		return
-	}
-
-	c.add <- entry
 }
 
-// Entries returns a snapshot of the cron entries.
-func (c *Cron) Entries() []*Entry {
-	if c.running {
-		c.snapshot <- nil
-		x := <-c.snapshot
-		return x
+// Shutdown the cron table schedule
+//
+// Once stopped, it can't be restarted.
+// This function is pre-shuttdown helper for your app, there is no Start/Stop functionallity with crontab package.
+func (c *Crontab) Shutdown() {
+	c.ticker.Stop()
+}
+
+// Clear all jobs from cron table
+func (c *Crontab) Clear() {
+	c.jobs = []job{}
+}
+
+// RunAll jobs in cron table, shcheduled or not
+func (c *Crontab) RunAll() {
+	for _, j := range c.jobs {
+		go j.run()
 	}
-	return c.entrySnapshot()
 }
 
-// Location gets the time zone location
-func (c *Cron) Location() *time.Location {
-	return c.location
-}
-
-// Start the cron scheduler in its own go-routine, or no-op if already started.
-func (c *Cron) Start() {
-	if c.running {
-		return
+// RunScheduled jobs
+func (c *Crontab) runScheduled(t time.Time) {
+	tick := getTick(t)
+	for _, j := range c.jobs {
+		if j.tick(tick) {
+			go j.run()
+		}
 	}
-	c.running = true
-	go c.run()
 }
 
-// Run the cron scheduler, or no-op if already running.
-func (c *Cron) Run() {
-	if c.running {
-		return
-	}
-	c.running = true
-	c.run()
-}
-
-func (c *Cron) runWithRecovery(j Job) {
+// run the job using reflection
+// Recover from panic although all functions and params are checked by AddJob, but you never know.
+func (j job) run() {
 	defer func() {
 		if r := recover(); r != nil {
-			const size = 64 << 10
-			buf := make([]byte, size)
-			buf = buf[:runtime.Stack(buf, false)]
-			c.logf("cron: panic running job: %v\n%s", r, buf)
+			log.Println("Crontab error", r)
 		}
 	}()
-	j.Run()
+	v := reflect.ValueOf(j.fn)
+	rargs := make([]reflect.Value, len(j.args))
+	for i, a := range j.args {
+		rargs[i] = reflect.ValueOf(a)
+	}
+	v.Call(rargs)
 }
 
-// Run the scheduler. this is private just due to the need to synchronize
-// access to the 'running' state variable.
-func (c *Cron) run() {
-	// Figure out the next activation times for each entry.
-	now := c.now()
-	for _, entry := range c.entries {
-		entry.Next = entry.Schedule.Next(now)
+// tick decides should the job be lauhcned at the tick
+func (j job) tick(t tick) bool {
+	if _, ok := j.min[t.min]; !ok {
+		return false
 	}
 
-	for {
-		// Determine the next entry to run.
-		sort.Sort(byTime(c.entries))
+	if _, ok := j.hour[t.hour]; !ok {
+		return false
+	}
 
-		var timer *time.Timer
-		if len(c.entries) == 0 || c.entries[0].Next.IsZero() {
-			// If there are no entries yet, just sleep - it still handles new entries
-			// and stop requests.
-			timer = time.NewTimer(100000 * time.Hour)
-		} else {
-			timer = time.NewTimer(c.entries[0].Next.Sub(now))
+	// cummulative day and dayOfWeek, as it should be
+	_, day := j.day[t.day]
+	_, dayOfWeek := j.dayOfWeek[t.dayOfWeek]
+	if !day && !dayOfWeek {
+		return false
+	}
+
+	if _, ok := j.month[t.month]; !ok {
+		return false
+	}
+
+	return true
+}
+
+// regexps for parsing schedyle string
+var (
+	matchSpaces = regexp.MustCompile(`\s+`)
+	matchN      = regexp.MustCompile(`(.*)/(\d+)`)
+	matchRange  = regexp.MustCompile(`^(\d+)-(\d+)$`)
+)
+
+// parseSchedule string and creates job struct with filled times to launch, or error if synthax is wrong
+func parseSchedule(s string) (j job, err error) {
+	s = matchSpaces.ReplaceAllLiteralString(s, " ")
+	parts := strings.Split(s, " ")
+	if len(parts) != 5 {
+		return job{}, errors.New("schedule string must have five components like * * * * *")
+	}
+
+	j.min, err = parsePart(parts[0], 0, 59)
+	if err != nil {
+		return j, err
+	}
+
+	j.hour, err = parsePart(parts[1], 0, 23)
+	if err != nil {
+		return j, err
+	}
+
+	j.day, err = parsePart(parts[2], 1, 31)
+	if err != nil {
+		return j, err
+	}
+
+	j.month, err = parsePart(parts[3], 1, 12)
+	if err != nil {
+		return j, err
+	}
+
+	j.dayOfWeek, err = parsePart(parts[4], 0, 6)
+	if err != nil {
+		return j, err
+	}
+
+	//  day/dayOfWeek combination
+	switch {
+	case len(j.day) < 31 && len(j.dayOfWeek) == 7: // day set, but not dayOfWeek, clear dayOfWeek
+		j.dayOfWeek = make(map[int]struct{})
+	case len(j.dayOfWeek) < 7 && len(j.day) == 31: // dayOfWeek set, but not day, clear day
+		j.day = make(map[int]struct{})
+	default:
+		// both day and dayOfWeek are * or both are set, use combined
+		// i.e. don't do anything here
+	}
+
+	return j, nil
+}
+
+// parsePart parse individual schedule part from schedule string
+func parsePart(s string, min, max int) (map[int]struct{}, error) {
+
+	r := make(map[int]struct{})
+
+	// wildcard pattern
+	if s == "*" {
+		for i := min; i <= max; i++ {
+			r[i] = struct{}{}
 		}
+		return r, nil
+	}
 
-		for {
-			select {
-			case now = <-timer.C:
-				now = now.In(c.location)
-				// Run every entry whose next time was less than now
-				for _, e := range c.entries {
-					if e.Next.After(now) || e.Next.IsZero() {
-						break
-					}
-					go c.runWithRecovery(e.Job)
-					e.Prev = e.Next
-					e.Next = e.Schedule.Next(now)
+	// */2 1-59/5 pattern
+	if matches := matchN.FindStringSubmatch(s); matches != nil {
+		localMin := min
+		localMax := max
+		if matches[1] != "" && matches[1] != "*" {
+			if rng := matchRange.FindStringSubmatch(matches[1]); rng != nil {
+				localMin, _ = strconv.Atoi(rng[1])
+				localMax, _ = strconv.Atoi(rng[2])
+				if localMin < min || localMax > max {
+					return nil, fmt.Errorf("out of range for %s in %s. %s must be in range %d-%d", rng[1], s, rng[1], min, max)
 				}
-
-			case newEntry := <-c.add:
-				timer.Stop()
-				now = c.now()
-				newEntry.Next = newEntry.Schedule.Next(now)
-				c.entries = append(c.entries, newEntry)
-
-			case <-c.snapshot:
-				c.snapshot <- c.entrySnapshot()
-				continue
-
-			case <-c.stop:
-				timer.Stop()
-				return
+			} else {
+				return nil, fmt.Errorf("unable to parse %s part in %s", matches[1], s)
 			}
+		}
+		n, _ := strconv.Atoi(matches[2])
+		for i := localMin; i <= localMax; i += n {
+			r[i] = struct{}{}
+		}
+		return r, nil
+	}
 
-			break
+	// 1,2,4  or 1,2,10-15,20,30-45 pattern
+	parts := strings.Split(s, ",")
+	for _, x := range parts {
+		if rng := matchRange.FindStringSubmatch(x); rng != nil {
+			localMin, _ := strconv.Atoi(rng[1])
+			localMax, _ := strconv.Atoi(rng[2])
+			if localMin < min || localMax > max {
+				return nil, fmt.Errorf("out of range for %s in %s. %s must be in range %d-%d", x, s, x, min, max)
+			}
+			for i := localMin; i <= localMax; i++ {
+				r[i] = struct{}{}
+			}
+		} else if i, err := strconv.Atoi(x); err == nil {
+			if i < min || i > max {
+				return nil, fmt.Errorf("out of range for %d in %s. %d must be in range %d-%d", i, s, i, min, max)
+			}
+			r[i] = struct{}{}
+		} else {
+			return nil, fmt.Errorf("unable to parse %s part in %s", x, s)
 		}
 	}
-}
 
-// Logs an error to stderr or to the configured error log
-func (c *Cron) logf(format string, args ...interface{}) {
-	if c.ErrorLog != nil {
-		c.ErrorLog.Printf(format, args...)
-	} else {
-		log.Printf(format, args...)
+	if len(r) == 0 {
+		return nil, fmt.Errorf("unable to parse %s", s)
 	}
+
+	return r, nil
 }
 
-// Stop stops the cron scheduler if it is running; otherwise it does nothing.
-func (c *Cron) Stop() {
-	if !c.running {
-		return
+// getTick returns the tick struct from time
+func getTick(t time.Time) tick {
+	return tick{
+		min:       t.Minute(),
+		hour:      t.Hour(),
+		day:       t.Day(),
+		month:     int(t.Month()),
+		dayOfWeek: int(t.Weekday()),
 	}
-	c.stop <- struct{}{}
-	c.running = false
-}
-
-// entrySnapshot returns a copy of the current cron entry list.
-func (c *Cron) entrySnapshot() []*Entry {
-	entries := []*Entry{}
-	for _, e := range c.entries {
-		entries = append(entries, &Entry{
-			Schedule: e.Schedule,
-			Next:     e.Next,
-			Prev:     e.Prev,
-			Job:      e.Job,
-		})
-	}
-	return entries
-}
-
-// now returns current time in c location
-func (c *Cron) now() time.Time {
-	return time.Now().In(c.location)
 }
