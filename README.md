@@ -1,9 +1,9 @@
-# Go/Golang package for gfbus tickers 
-This package provides gfbus tickers to golang apps, supporting gfbus-like syntax like `* * * * *` or `*/2 * * * *` etc.
+# Go/Golang package for gfcron tickers 
+This package provides gfcron tickers to golang apps, supporting gfcron-like syntax like `* * * * *` or `*/2 * * * *` etc.
 
 ## Installation
 ```
-go get github.com/greatfocus/gf-bus
+go get github.com/greatfocus/gf-cron
 ```
 
 ## Example
@@ -15,15 +15,15 @@ import (
     "fmt"
     "log"
 
-    "github.com/greatfocus/gf-bus"
+    "github.com/greatfocus/gf-cron"
 )
 
 func main() {
 
-    ctab := gfbus.New() // create cron table
+    c := gfcron.New() // create cron table
 
     // AddJob and test the errors
-    err := ctab.AddJob("0 12 1 * *", myFunc) // on 1st day of month
+    err := c.AddJob("0 12 1 * *", myFunc) // on 1st day of month
     if err != nil {
         log.Println(err)
         return
@@ -31,12 +31,12 @@ func main() {
 
     // MustAddJob is like AddJob but panics on wrong syntax or problems with func/args
     // This aproach is similar to regexp.Compile and regexp.MustCompile from go's standard library,  used for easier initialization on startup
-    ctab.MustAddJob("* * * * *", myFunc) // every minute
-    ctab.MustAddJob("0 12 * * *", myFunc3) // noon lauch
+    c.MustAddJob("* * * * *", myFunc) // every minute
+    c.MustAddJob("0 12 * * *", myFunc3) // noon lauch
 
     // fn with args
-    ctab.MustAddJob("0 0 * * 1,2", myFunc2, "Monday and Tuesday midnight", 123) 
-    ctab.MustAddJob("*/5 * * * *", myFunc2, "every five min", 0)
+    c.MustAddJob("0 0 * * 1,2", myFunc2, "Monday and Tuesday midnight", 123) 
+    c.MustAddJob("*/5 * * * *", myFunc2, "every five min", 0)
 
     // all your other app code as usual, or put sleep timer for demo
     // time.Sleep(10 * time.Minute)
@@ -56,11 +56,11 @@ func myFunc2(s string, n int) {
 
 ```
 
-## gfbus syntax
+## gfcron syntax
 
-If you are not faimiliar with gfbus syntax you might be better off with other packages for scheduling tasks. But if you are familiar with Linux and gfbus, this package might be right for you.
+If you are not faimiliar with gfcron syntax you might be better off with other packages for scheduling tasks. But if you are familiar with Linux and gfcron, this package might be right for you.
 
-Here are the few quick references about gfbus simple but powerful syntax.
+Here are the few quick references about gfcron simple but powerful syntax.
 
 ```
 *     *     *     *     *        
@@ -97,7 +97,7 @@ Here are the few quick references about gfbus simple but powerful syntax.
 
 ## Notice
 
-There is no way to reschedule or to remove single job from gfbus during runtime with gfbus package. (Re)create new instance of gfbus or use `gfbus.Clear()` function and then add jobs again to reschedule during runtime.
+There is no way to reschedule or to remove single job from gfcron during runtime with gfcron package. (Re)create new instance of gfcron or use `gfcron.Clear()` function and then add jobs again to reschedule during runtime.
 
 
 

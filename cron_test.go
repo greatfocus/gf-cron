@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// TestSchedule parse the crontab syntax and compare number of target min/hour/days/month with expected ones
+// TestSchedule parse the cron syntax and compare number of target min/hour/days/month with expected ones
 func TestSchedule(t *testing.T) {
 	var schTest = []struct {
 		s   string
@@ -48,7 +48,7 @@ func TestSchedule(t *testing.T) {
 	}
 }
 
-// TestScheduleError tests crontab syntax which should not be accepted
+// TestScheduleError tests cron syntax which should not be accepted
 func TestScheduleError(t *testing.T) {
 	var schErrorTest = []string{
 		"* * * * * *",
@@ -73,6 +73,6 @@ func TestScheduleError(t *testing.T) {
 	}
 }
 
-func Fake(sec int) *Crontab {
+func Fake(sec int) *Cron {
 	return new(time.Duration(sec) * time.Second)
 }

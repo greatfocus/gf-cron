@@ -43,68 +43,68 @@ type Foo interface {
 
 func TestJobError(t *testing.T) {
 
-	ctab := New()
+	c := New()
 
-	if err := ctab.AddJob("* * * * *", myFunc, 10); err == nil {
+	if err := c.AddJob("* * * * *", myFunc, 10); err == nil {
 		t.Error("This AddJob should return Error, wrong number of args")
 	}
 
-	if err := ctab.AddJob("* * * * *", nil); err == nil {
+	if err := c.AddJob("* * * * *", nil); err == nil {
 		t.Error("This AddJob should return Error, fn is nil")
 	}
 
 	var x int
-	if err := ctab.AddJob("* * * * *", x); err == nil {
+	if err := c.AddJob("* * * * *", x); err == nil {
 		t.Error("This AddJob should return Error, fn is not func kind")
 	}
 
-	if err := ctab.AddJob("* * * * *", myFunc2, "s", 10, 12); err == nil {
+	if err := c.AddJob("* * * * *", myFunc2, "s", 10, 12); err == nil {
 		t.Error("This AddJob should return Error, wrong number of args")
 	}
 
-	if err := ctab.AddJob("* * * * *", myFunc2, "s", "s2"); err == nil {
+	if err := c.AddJob("* * * * *", myFunc2, "s", "s2"); err == nil {
 		t.Error("This AddJob should return Error, args are not the correct type")
 	}
 
-	if err := ctab.AddJob("* * * * * *", myFunc2, "s", "s2"); err == nil {
+	if err := c.AddJob("* * * * * *", myFunc2, "s", "s2"); err == nil {
 		t.Error("This AddJob should return Error, syntax error")
 	}
 
 	// custom types and interfaces as function params
 	var m MyTypeInterface
-	if err := ctab.AddJob("* * * * *", myFuncStruct, m); err != nil {
+	if err := c.AddJob("* * * * *", myFuncStruct, m); err != nil {
 		t.Error(err)
 	}
 
-	if err := ctab.AddJob("* * * * *", myFuncInterface, m); err != nil {
+	if err := c.AddJob("* * * * *", myFuncInterface, m); err != nil {
 		t.Error(err)
 	}
 
 	var mwo MyTypeNoInterface
-	if err := ctab.AddJob("* * * * *", myFuncInterface, mwo); err == nil {
+	if err := c.AddJob("* * * * *", myFuncInterface, mwo); err == nil {
 		t.Error("This should return error, type that don't implements interface assigned as param")
 	}
 
-	ctab.Shutdown()
+	c.Shutdown()
 }
 
 var testN int
 var testS string
 
-func TestCrontab(t *testing.T) {
+func TestCron(t *testing.T) {
 	testN = 0
 	testS = ""
 
-	ctab := Fake(2) // fake crontab wiht 2sec timer to speed up test
+	c := Fake(2) // fake cron wiht 2sec timer to speed up test
 
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	if err := ctab.AddJob("* * * * *", func() { testN++; wg.Done() }); err != nil {
+	if err := c.AddJob("* * * * *", func() { testN++; wg.Done() }); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := ctab.AddJob("* * * * *", func(s string) { testS = s; wg.Done() }, "param"); err != nil {
+	if err := c.AddJob("* * * * *", func(s string) { testS = s; wg.Done() }, "param"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -126,24 +126,24 @@ func TestCrontab(t *testing.T) {
 	if testS != "param" {
 		t.Error("func 2 not executed as scheduled")
 	}
-	ctab.Shutdown()
+	c.Shutdown()
 }
 
 func TestRunAll(t *testing.T) {
 	testN = 0
 	testS = ""
 
-	ctab := New()
+	c := New()
 
-	if err := ctab.AddJob("* * * * *", func() { testN++ }); err != nil {
+	if err := c.AddJob("* * * * *", func() { testN++ }); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := ctab.AddJob("* * * * *", func(s string) { testS = s }, "param"); err != nil {
+	if err := c.AddJob("* * * * *", func(s string) { testS = s }, "param"); err != nil {
 		t.Fatal(err)
 	}
 
-	ctab.RunAll()
+	c.RunAll()
 	time.Sleep(time.Second)
 
 	if testN != 1 {
@@ -154,8 +154,8 @@ func TestRunAll(t *testing.T) {
 		t.Error("func not executed on RunAll() or arg not passed")
 	}
 
-	ctab.Clear()
-	ctab.RunAll()
+	c.Clear()
+	c.RunAll()
 
 	if testN != 1 {
 		t.Error("Jobs not cleared")
@@ -165,5 +165,5 @@ func TestRunAll(t *testing.T) {
 		t.Error("Jobs not cleared")
 	}
 
-	ctab.Shutdown()
+	c.Shutdown()
 }

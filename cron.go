@@ -11,8 +11,8 @@ import (
 	"time"
 )
 
-// Crontab struct representing cron table
-type Crontab struct {
+// Cron struct representing cron table
+type Cron struct {
 	ticker *time.Ticker
 	jobs   []job
 }
@@ -39,13 +39,13 @@ type tick struct {
 }
 
 // New initializes and returns new cron table
-func New() *Crontab {
+func New() *Cron {
 	return new(time.Minute)
 }
 
-// new creates new crontab, arg provided for testing purpose
-func new(t time.Duration) *Crontab {
-	c := &Crontab{
+// new creates new cron, arg provided for testing purpose
+func new(t time.Duration) *Cron {
+	c := &Cron{
 		ticker: time.NewTicker(t),
 	}
 
@@ -67,7 +67,7 @@ func new(t time.Duration) *Crontab {
 // * fn is not function
 //
 // * Provided args don't match the number and/or the type of fn args
-func (c *Crontab) AddJob(schedule string, fn interface{}, args ...interface{}) error {
+func (c *Cron) AddJob(schedule string, fn interface{}, args ...interface{}) error {
 	j, err := parseSchedule(schedule)
 	if err != nil {
 		return err
@@ -97,7 +97,7 @@ func (c *Crontab) AddJob(schedule string, fn interface{}, args ...interface{}) e
 		}
 	}
 
-	// all checked, add job to cron tab
+	// all checked, add job to cron
 	j.fn = fn
 	j.args = args
 	c.jobs = append(c.jobs, j)
@@ -115,7 +115,7 @@ func (c *Crontab) AddJob(schedule string, fn interface{}, args ...interface{}) e
 // * fn is not function
 //
 // * Provided args don't match the number and/or the type of fn args
-func (c *Crontab) MustAddJob(schedule string, fn interface{}, args ...interface{}) {
+func (c *Cron) MustAddJob(schedule string, fn interface{}, args ...interface{}) {
 	if err := c.AddJob(schedule, fn, args...); err != nil {
 		panic(err)
 	}
@@ -124,25 +124,25 @@ func (c *Crontab) MustAddJob(schedule string, fn interface{}, args ...interface{
 // Shutdown the cron table schedule
 //
 // Once stopped, it can't be restarted.
-// This function is pre-shuttdown helper for your app, there is no Start/Stop functionallity with crontab package.
-func (c *Crontab) Shutdown() {
+// This function is pre-shuttdown helper for your app, there is no Start/Stop functionallity with cron package.
+func (c *Cron) Shutdown() {
 	c.ticker.Stop()
 }
 
-// Clear all jobs from cron table
-func (c *Crontab) Clear() {
+// Clear all jobs from cron le
+func (c *Cron) Clear() {
 	c.jobs = []job{}
 }
 
 // RunAll jobs in cron table, shcheduled or not
-func (c *Crontab) RunAll() {
+func (c *Cron) RunAll() {
 	for _, j := range c.jobs {
 		go j.run()
 	}
 }
 
 // RunScheduled jobs
-func (c *Crontab) runScheduled(t time.Time) {
+func (c *Cron) runScheduled(t time.Time) {
 	tck := getTick(t)
 	for _, j := range c.jobs {
 		if j.tick(tck) {
@@ -156,7 +156,7 @@ func (c *Crontab) runScheduled(t time.Time) {
 func (j job) run() {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Println("Crontab error", r)
+			log.Println("Cron error", r)
 		}
 	}()
 	v := reflect.ValueOf(j.fn)
